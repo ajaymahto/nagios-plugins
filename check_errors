@@ -1,0 +1,92 @@
+#! /usr/bin/env python
+# ethtool -S <interface>
+# netstat -st | grep retr
+from subprocess import Popen, PIPE
+import sys
+
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_CRITICAL = 2
+STATUS_UNKNOWN = 3
+
+WARN_PERC = 2
+CRIT_PERC = 5
+
+def main():
+ 
+ dash_output = ""
+ perfdata = ""
+ error_flags = 0
+
+ # Getting errors
+ p = Popen("netstat -i | awk '{print $1}'", shell=True, stdout=PIPE, stderr=PIPE)
+ output, error = p.communicate()
+ iface_list = output.split()[2:]
+ iface_list.remove('lo')
+ errors = {}
+ for iface in iface_list:
+   cmd = 'ethtool -S %s | grep error' % iface
+   p = Popen(cmd , shell=True, stdout=PIPE, stderr=PIPE)
+   output, error = p.communicate()
+   if output:
+     out1 = output.replace(" ", "").strip()
+     out2 = dict(item.split(":") for item in out1.split("\n"))
+     errors[iface] = out2
+
+ # Getting retransmits
+ retransmits = {} 
+ p = Popen('cat /proc/net/snmp | grep Tcp', shell=True, stdout=PIPE, stderr=PIPE)
+ output, error = p.communicate()
+ if output:
+   out1 = output.strip("\n").split("\n")
+   for i in range(0, len(out1)):
+     out1[i] = out1[i].split()
+   for i in range(0, len(out1[0])):
+     key = out1[0][i]
+     value = out1[1][i]
+     retransmits[key] = value      
+   del retransmits['Tcp:'] 
+
+ # Adding to perfdata
+ for retr in retransmits:
+    perf_var = "_".join(retr.split())
+    perfdata += "%s=%s;;;; " % (perf_var, retransmits[retr])
+ segment_retransmit_percent = float(int(retransmits['RetransSegs']) * 100) / int(retransmits['OutSegs'])
+ seg_ret_perc = str(segment_retransmit_percent)
+ perfdata += "seg_retr_percent=%s;;;; " % segment_retransmit_percent
+   
+ if errors:
+  for iface in errors:
+     for error_type in errors[iface]:
+       if error_type in errors[iface].keys():
+        if errors[iface][error_type] != 0:
+           error_flags += int(errors[iface][error_type])
+        perfdata += "%s-%s=%s;;;; " % (error_type, iface, errors[iface][error_type])
+ 
+  # Adding to output
+ dash_output += "Seg_Retransmit_%% : %.2f%%\n" % segment_retransmit_percent
+ dash_output += "Warn_%%:  %s, Crit_%%: %s\n" % (WARN_PERC, CRIT_PERC)
+ dash_output += "---\n"
+ dash_output += "Tcp Segment Stats:\n"
+ for retr in retransmits:
+    dash_output += "%s : %s\n" % (retr, retransmits[retr])
+ dash_output += "---\n"
+ if errors:
+  dash_output += "Total Errors=%s\n" % error_flags
+  for error_type in errors[iface]:
+    dash_output += "%s:\n" % error_type
+    for iface in errors:
+      if error_type in errors[iface].keys():
+        dash_output += "  %s : %s\n" % (iface, errors[iface][error_type]) 
+  dash_output += "---\n"
+ 
+ print dash_output + " | " + perfdata
+ 
+ if segment_retransmit_percent >= CRIT_PERC:
+    return STATUS_CRITICAL
+ elif segment_retransmit_percent >= WARN_PERC:
+    return STATUS_WARNING
+ return STATUS_OK
+
+if __name__ == '__main__':
+  sys.exit(main())

@@ -1,0 +1,164 @@
+#! /usr/bin/env python
+
+from subprocess import Popen, PIPE
+import sys
+import ast
+
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_CRITICAL = 2
+STATUS_UNKNOWN = 3
+
+def main():
+    # Gathering aggregate usage details from Abishek's script
+    cmd = "cat /tmp/aggr_ssd_usage_details"
+    p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+    output, error = p.communicate()
+    if output:
+        first_line = output.splitlines()[0:2]
+        data_lines = output.splitlines()[4:]
+    else:
+        print error
+        return STATUS_UNKNOWN
+
+    # Getting aggregate name
+    aggregate = first_line[0]
+
+    # Getting usage details
+    aggr_details = ast.literal_eval(first_line[1])
+
+    # Creating proper headers
+    headers = ['pod', 'fi', 'usable_vcpus', 'used_vcpus', \
+    'free_vcpus', 'usable_ram_gb', 'used_ram_gb', 'free_ram_gb', \
+    'running_vms_count','max_instances', 'usable_ssd_gb', 'used_ssd_gb', \
+    'free_ssd_gb']
+    
+    # Creating output/perfdata strings
+    dash_output = "Aggregate: %s\n" % aggregate
+    dash_output += "Max_Instances_Per_Host: %s, RAM Allocation Ratio: %s, \
+    CPU Allocation Ratio: %s\n\n" % (aggr_details['max_instances_per_host'], \
+    aggr_details['ram_allocation_ratio'], aggr_details['cpu_allocation_ratio'])
+    dash_output += "Details : \n\n"
+
+    perfdata = "%s-max_instances_per_host=%s;;;; %s-ram_alloc_ratio=%s;;;; \
+    %s-cpu_alloc_ratio=%s;;;;" % (\
+    aggregate, aggr_details['max_instances_per_host'], \
+    aggregate, aggr_details['ram_allocation_ratio'], \
+    aggregate, aggr_details['cpu_allocation_ratio'])
+    
+    # Creating headers for dash_output
+    headers2 = ['hypervisor', 'pod', 'fi', 'usable_vcpus', 'free_vcpus', \
+    'usable_ram', 'free_ram', 'usable_ssd', 'free_ssd', \
+    'vms', 'max_vms']
+    line = ""
+    line += "%s " % headers2[0].center(12)
+    for item in headers2[1:3]:
+       line += "%s " % item.center(5)
+    for item in headers2[3:9]:
+       line += " %s " % item.center(12)
+    line += "%s " % headers2[9].center(4)
+    line += "%s " % headers2[10].center(7)
+    dash_output += "%s\n" % line
+
+    # Converting script output to dict for proper processing of data
+    data_lines_dict = {}
+    for line in data_lines:
+       data = line.split()[1:]
+       hypervisor = line.split()[0]
+       data_lines_dict[hypervisor] = {}
+       for i in range(0,13):
+          data_lines_dict[hypervisor][headers[i]] = data[i]
+    #print data_lines_dict
+    
+    # Adding data to table for proper display of output
+    for hypervisor in data_lines_dict.keys():
+        data_list = []
+
+        # Adding to dash_output
+        data_list.append(hypervisor)
+        data_list.append(data_lines_dict[hypervisor]['pod'])
+        data_list.append(data_lines_dict[hypervisor]['fi'])
+        data_list.append(data_lines_dict[hypervisor]['usable_vcpus'])
+
+        
+        # Adding to perfdata
+        perfdata += " %s-usable_vcpus=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['usable_vcpus'])
+
+        # Adding to dash_output
+        data_list.append(data_lines_dict[hypervisor]['free_vcpus'])
+
+        # Adding to perfdata
+        perfdata += " %s-used_vcpus=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['used_vcpus'])
+
+        perfdata += " %s-free_vcpus=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['free_vcpus'])
+
+        # Adding to dash_output
+        data_list.append(data_lines_dict[hypervisor]['usable_ram_gb'] + " GB")
+
+        # Adding to perfdata
+        perfdata += " %s-usable_ram_gb=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['usable_ram_gb'])
+
+        # Adding to dash_output
+        data_list.append(data_lines_dict[hypervisor]['free_ram_gb'] + " GB")
+
+        # Adding to perfdata
+        perfdata += " %s-used_ram_gb=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['used_ram_gb'])
+
+        perfdata += " %s-free_ram_gb=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['free_ram_gb'])
+
+        # Adding to dash_output
+        data_list.append(data_lines_dict[hypervisor]['usable_ssd_gb'] + " GB")
+
+        # Adding to perfdata
+        perfdata += " %s-usable_ssd_gb=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['usable_ssd_gb'])
+
+        # Adding to dash_output
+        data_list.append(data_lines_dict[hypervisor]['free_ssd_gb'] + " GB")
+
+        # Adding to perfdata
+        perfdata += " %s-used_ssd_gb=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['used_ssd_gb'])
+
+        perfdata += " %s-free_ssd_gb=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['free_ssd_gb'])
+
+        # Adding to dash_output
+        data_list.append(data_lines_dict[hypervisor]['running_vms_count'])
+
+        # Adding to perfdata
+        perfdata += " %s-running_vm_count=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['running_vms_count'])
+
+        # Adding to dash_output
+        data_list.append(data_lines_dict[hypervisor]['max_instances'])
+
+        # Adding to perfdata
+        perfdata += " %s-max_instances=%s;;;;" % (hypervisor, \
+        data_lines_dict[hypervisor]['max_instances'])
+        
+        # Getting things in tabular format
+        line = ""
+        line += "%s " % data_list[0].center(12)
+        for item in data_list[1:3]:
+           line += "%s " % item.center(5)
+        for item in data_list[3:9]:
+           line += " %s " % item.center(12)
+        line += "%s " % data_list[9].center(4)
+        line += "%s " % data_list[10].center(7)
+        dash_output += "%s\n" % line
+    
+    # Printing output in proper format
+    print dash_output + " | " + perfdata
+
+    return STATUS_OK
+    
+if __name__ == '__main__':
+    sys.exit(main())
+

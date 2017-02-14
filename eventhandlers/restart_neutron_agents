@@ -1,0 +1,12 @@
+#!/bin/bash
+
+CHECK_SERVICE=/usr/lib/nagios/plugins/check_upstart_service
+
+SERVICES="neutron-l3-agent neutron-lbaas-agent neutron-metadata-agent \
+          neutron-ovs-cleanup neutron-plugin-openvswitch-agent"
+
+for service in $SERVICES; do
+	if ! $CHECK_SERVICE "$service"; then
+		sudo service $service restart
+	fi
+done

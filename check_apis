@@ -1,0 +1,20 @@
+#!/bin/bash
+
+CHECK_SERVICE=/usr/lib/nagios/plugins/check_upstart_service
+C=0
+services=("nova-api" "neutron-server" "cinder-api" "glance-api" "keystone")
+
+for service in "${services[@]}"; do
+	stat=$($CHECK_SERVICE $service | awk '{print $3}') #stat will either store "running" or "down" (Based on the output of check_upstart_service plugin)
+	echo "$service is $stat"
+	if [ "$stat" == "down" ]; then
+		(( C++ ))
+	fi
+done
+
+if [ $C -gt 0 ]; then
+	exit 2
+fi
+			
+
+

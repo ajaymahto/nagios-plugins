@@ -1,0 +1,63 @@
+#! /usr/bin/env python
+
+# Plugin to check for output of sdc-rabbit-analyze in connet nodes.
+# This plugin would check for lines containing strings simlar to 
+# 'Found "0" l3_agent_fanout queues! (expected 3)'
+# Author : Ajay Mahto <ajay.mahto@snapdeal.com>
+
+import sys
+from subprocess import Popen, PIPE
+
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_CRITICAL = 2
+STATUS_UNKNOWN = 3
+
+def rabbit_analyze():
+
+  perfdata = ''
+  dash_output = ''
+  status = STATUS_OK
+
+  command = ''' sudo sdc-rabbit-analyze | grep 'Found "0"' '''
+  p = Popen(command, shell=True, stdout=PIPE, stderr=PIPE)
+  output, error = p.communicate()
+  
+  if not error:
+   
+   # Creating list of queue errors.
+   queue_errors = list(set(output.splitlines()))
+
+   # Adding count of errors to output.
+   dash_output = "Total Queue Errors : %s\n" % len(queue_errors)
+
+   # Setting check status for plugin.
+   if len(queue_errors) == 0:
+    status = STATUS_OK
+   else:
+    status = STATUS_CRITICAL
+
+   # Formatting output for dashboard.
+   for error in queue_errors:
+    error_list = error.split()
+    error_list[0] = 'Found'
+    error_list[-1] = error_list[-1].split(')')[0] + ')'
+    error1 = " ".join(error_list)
+    dash_output += '%s\n' % (error1)
+
+   # Addding perfdata for grafana.
+   perfdata = "queue_errors_count=%s;;1;;" % len(queue_errors)
+
+  else:
+   # Handling command failure scenario.
+   dash_output = str(error)
+   perfdata = 'queue_error_count=-1;;;;'
+   status = STATUS_UNKNOWN
+
+  print dash_output + "|" + perfdata
+
+  return status
+
+if __name__ == '__main__':
+   sys.exit(rabbit_analyze())
+

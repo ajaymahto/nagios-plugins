@@ -1,0 +1,149 @@
+#!/usr/bin/env python
+
+import argparse
+import socket
+import os
+import re
+import subprocess
+import sys
+import json
+
+__version__ = '1.1.0'
+
+# default ceph values
+CEPH_EXEC = '/usr/bin/ceph'
+CEPH_COMMAND = 'pg'
+
+# nagios exit code
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_ERROR = 2
+STATUS_UNKNOWN = 3
+
+##
+# ceph pg stat output example
+##
+ceph_pg_stat_output_example = '''{
+    "num_pg_by_state": [
+        {
+            "name": "active+undersized+degraded",
+            "num": 667
+        },
+        {
+            "name": "active",
+            "num": 215
+        },
+        {
+            "name": "active+remapped",
+            "num": 78
+        }
+    ],
+    "version": 8569,
+    "num_pgs": 960,
+    "num_bytes": 848,
+    "raw_bytes_used": 585543680,
+    "raw_bytes_avail": 16097661521920,
+    "raw_bytes": 16098247065600,
+    "read_bytes_sec": 999,
+    "io_sec": 1,
+    "degraded_objects": 43,
+    "degraded_total": 86,
+    "degraded_ratio": 0.500000
+}'''
+
+def main():
+
+  # parse args
+  parser = argparse.ArgumentParser(description="'ceph pg stat' nagios plugin.")
+  parser.add_argument('-e','--exe', help='ceph executable [%s]' % CEPH_EXEC)
+  parser.add_argument('-c','--conf', help='alternative ceph conf file')
+  parser.add_argument('-V','--version', help='show version and exit', action='store_true')
+  args = parser.parse_args()
+
+  if args.version:
+    print 'version %s' % __version__
+    return STATUS_OK
+
+  # validate args
+  ceph_exec = args.exe if args.exe else CEPH_EXEC
+  if not os.path.exists(ceph_exec):
+    print "MON ERROR: ceph executable '%s' doesn't exist" % ceph_exec
+    return STATUS_UNKNOWN
+
+  if args.conf and not os.path.exists(args.conf):
+    print "PG ERROR: ceph conf file '%s' doesn't exist" % args.conf
+    return STATUS_UNKNOWN
+  # Gathering ceph clusters
+  ceph_clusters = []
+  dirlist = filter(lambda f: not f.startswith('.'), os.listdir('/etc/ceph'))
+  for obj in dirlist:
+      if ".conf" in obj:
+         ceph_clusters.append(obj[:-5])
+  
+#  print ceph_clusters
+
+  message = ""
+  perfdata = ""
+  ok = 0
+  error = 0
+  warning = 0
+  unknown = 0
+
+  for cluster in ceph_clusters:
+  
+    # build command
+    ceph_cmd = [ceph_exec]
+    ceph_cmd.append('--cluster')
+    ceph_cmd.append(cluster)
+    if args.conf:
+      ceph_cmd.append('-c')
+      ceph_cmd.append(args.conf)
+    ceph_cmd.append(CEPH_COMMAND)
+    ceph_cmd.append('stat')
+    ceph_cmd.append('-f')
+    ceph_cmd.append('json')
+    ceph_cmd.insert(0, "sudo")
+  
+    # exec command
+    p = subprocess.Popen(ceph_cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    output, err = p.communicate()
+  
+  
+    if p.returncode != 0 or not output:
+      message += "%s-PG ERROR: %s" % (cluster, err)
+      error += 1
+      continue
+  
+    # load json output and parse
+    pg_stat = False
+    try:
+      pg_stat = json.loads(output)
+    except Exception as e:
+      message += "%s-PG ERROR: could not parse '%s' output: %s: %s" % (cluster, CEPH_COMMAND, output, e)
+      unknown += 1
+      continue 
+  
+    for obj in pg_stat['num_pg_by_state']:
+      message += "%s-%s: %d\n" % (cluster, obj['name'], obj['num'])
+      perfdata += "%s-%s=%d;;;; " % (cluster, obj['name'].replace('+', '_'), obj['num'])
+  
+    message = "%s-Total pg count: %s\n%s" % (cluster, str(pg_stat['num_pgs']), message)
+#    print "Total pg count:" + str(pg_stat['num_pgs']) + " | " + perfdata + "\n" + "\n".join(message.splitlines()[1:])
+#    print message.splitlines()[0]
+  
+    ok += 1
+  print message + " | " + perfdata
+
+  if error > 0:
+     return STATUS_ERROR
+  elif warning > 0:
+     return STATUS_WARNING
+  elif ok > 0:
+     return STATUS_OK
+  else:
+     return STATUS_UNKNOWN  
+
+
+# main
+if __name__ == "__main__":
+  sys.exit(main())

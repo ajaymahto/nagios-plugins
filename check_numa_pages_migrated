@@ -1,0 +1,89 @@
+#! /usr/bin/env python
+
+import argparse
+import sys
+import os.path
+
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_CRITICAL = 2
+STATUS_UNKNOWN = 3
+
+WARN = 10000
+CRIT = 20000
+
+def write_npm(npm):
+    try:
+      fp = open('/tmp/numa_pages_migrated', 'w')
+      fp.write(str(npm))
+      fp.close()
+    except IOError as e:
+      print e
+      EXIT_STATUS = STATUS_UNKNOWN
+
+def read_npm():
+    if not os.path.isfile('/tmp/numa_pages_migrated'):
+       write_npm(get_current_npm())
+       return 0
+
+    try:
+      fp = open('/tmp/numa_pages_migrated', 'r')
+      npm = fp.readline().strip()
+      fp.close()
+    except IOError as e:
+      npm = 0
+      print e
+      EXIT_STATUS = STATUS_UNKNOWN
+    return int(npm)
+
+def get_current_npm():
+    try:
+      fp = open('/proc/vmstat', 'r')
+      lines = fp.readlines()
+      fp.close()
+    except IOError as e:
+      print e
+      EXIT_STATUS = STATUS_UNKNOWN
+
+    npm = [val for val in lines if 'numa_pages_migrated' in val][0]
+    return int(npm.split()[1].strip())
+
+def main():
+
+    parser = argparse.ArgumentParser(description='Gather Warning \
+                                     and Critical Values')
+    parser.add_argument('-w', help='Warning Value', required=True)
+    parser.add_argument('-c', help='Critical Value', required=True)
+
+    args = vars(parser.parse_args())
+
+    CRIT = int(args['c'])
+    WARN = int(args['w'])
+    
+    if CRIT < WARN:
+       print "Invalid crit and warn values; `c` should be greater then `w`\n"
+       return STATUS_UNKNOWN
+
+    current_npm = get_current_npm()
+    previous_npm = read_npm()
+    write_npm(current_npm)
+    diff = current_npm - previous_npm
+    
+    output = "Numa_Pages_Migrated (last 1 min) : %s\n" % diff
+    perfdata = "npm_1min=%s;;;;" % diff
+
+    if diff > CRIT:
+        output += "CRITICAL LIMIT : %s\n" % CRIT
+        EXIT_STATUS = STATUS_CRITICAL
+    elif diff > WARN:
+        output += "WARNING LIMIT : %s\n" % WARN
+        EXIT_STATUS = STATUS_WARNING
+    else:
+        EXIT_STATUS = STATUS_OK
+    
+    print output + " | " + perfdata
+
+    return EXIT_STATUS
+
+if __name__ == '__main__':
+    sys.exit(main())

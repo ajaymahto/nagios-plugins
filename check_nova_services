@@ -1,0 +1,41 @@
+#!/bin/bash
+# Nagios nrpe plugin for openstack. This plugin checks nova services if they are enable and up or not.
+
+# Checking if controller has vip
+. /usr/local/bin/sdc-common
+
+if ! i_own_vip; then
+    exit 0
+fi
+
+export OS_USERNAME=$1
+export OS_AUTH_URL=$2
+export OS_TENANT_NAME=$3
+export OS_PASSWORD=$4
+
+
+EXIT="GOOD"
+
+CMD=$(nova service-list | egrep -v "+----|Binary" | awk -F'|' '{print $2,$3,$4,$5,$6,$7,$8,$9}')
+
+while read ID BINARY HOST ZONE STATUS STATE UPDATED REASON
+do
+        if [ "$STATE" != "up" ]; then
+                EXIT="BAD"
+                echo "$BINARY on $HOST is $STATE, reason: $REASON"
+                continue
+        fi
+done < <(echo "$CMD")
+
+if [ "$EXIT" == "BAD" ]; then
+	exit 2
+else
+	echo "All Nova Services are up and running"
+	echo "nova-cert is running"
+	echo "nova-conductor is running"
+	echo "nova-consoleauth is running"
+	echo "nova-scheduler is running"
+	exit 0
+fi
+
+

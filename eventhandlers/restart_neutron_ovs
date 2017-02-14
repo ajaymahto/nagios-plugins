@@ -1,0 +1,3 @@
+#!/bin/bash
+
+sudo service neutron-plugin-openvswitch-agent restart

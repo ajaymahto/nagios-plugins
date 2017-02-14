@@ -1,0 +1,67 @@
+#! /usr/bin/env python
+
+import subprocess
+import os
+import sys
+
+
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_CRITICAL = 2
+STATUS_UNKNOWN = 3
+
+def ping(host):
+    """
+    Returns True if host responds to a ping request
+    """
+    import os, platform
+
+    # Ping parameters as function of OS
+    ping_str = "-n 1 -q" if  platform.system().lower()=="windows" else "-c 1 -q"
+
+    # Ping
+    return os.system("ping " + ping_str + " " + host + "> /dev/null 2>&1") == 0
+
+def main():
+  command = "icinga2 node list | grep -E \"Node\" | awk -F\"'\" '{print $2}'"
+
+  node_list = subprocess.check_output(['bash', '-c', command])
+
+  host_list = node_list.split()
+
+  host_list_len = len(host_list)
+  up_list = []
+  down_list = []
+  
+  # Converting to ips
+  for host in host_list:
+     if (ping(host)):
+        up_list.append(host)
+     else:
+        down_list.append(host)
+
+  # Count of up/down hosts
+  up_hosts_count = len(up_list)
+  down_hosts_count = len(down_list)
+
+  # Output
+  output = "Hosts Up: %s, Hosts Down: %s\n" % (up_hosts_count, down_hosts_count)  
+  if down_hosts_count != 0:
+    output = "%s\nHosts Down: " % (output)
+    for host in down_list:
+      output = "%s\n%s" % (output, host)
+
+  # Perfdata
+  perfdata = "up_hosts=%s;;;0;%s down_hosts=%s;1;1;0;%s" % (up_hosts_count, host_list_len, down_hosts_count, host_list_len)
+  
+  print "%s | %s" % (output, perfdata)
+
+  EXIT_STATUS = STATUS_OK
+  
+  if up_hosts_count < host_list_len:
+    EXIT_STATUS = STATUS_CRITICAL
+  
+  return EXIT_STATUS 
+
+if __name__ == "__main__":
+	sys.exit(main())

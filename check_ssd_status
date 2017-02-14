@@ -1,0 +1,73 @@
+#! /usr/bin/env python
+import sys
+import argparse
+from subprocess import Popen, PIPE
+from collections import OrderedDict
+
+STATUS_OK = 0
+STATUS_WARN = 1
+STATUS_CRIT = 2
+STATUS_UNKNOWN = 3
+
+def main():
+  
+  parser = argparse.ArgumentParser()
+  parser.add_argument("-c", required=True, type=float, help="Critical value")
+  parser.add_argument("-w", required=True, type=float, help="Warning value")
+  args = parser.parse_args()
+  CRIT_PERC, WARN_PERC = args.c, args.w
+
+  cmd = "sudo vgs | grep '{{ LOCALSSD_CINDER_VG }}'"
+  p = Popen(cmd, shell=True, stdout = PIPE, stderr = PIPE)
+  output, error = p.communicate()
+  if output:
+    ssd_stats = output.strip("\n").split()
+  else:
+    print "Error running %s; \n" % cmd
+    return STATUS_UNKNOWN
+
+  SSD_STATS = OrderedDict([('VUsed_percent', '0.0'), ('VSize', '0.0'), ('VUsed', '0.0'), ('VFree', '0.0')])
+  ssd_stats_orig = OrderedDict([('Used_percent', '0.0'), ('Size', '0.0'), ('Free', '0.0')]) 
+
+  if ssd_stats[-1][-1] == 't':
+    SSD_STATS['VFree'] = float(ssd_stats[-1].strip("t")) * (2 ** 40)
+  elif ssd_stats[-1][-1] == 'g':
+    SSD_STATS['VFree'] = float(ssd_stats[-1].strip("g")) * (2 ** 30)
+  elif ssd_stats[-1][-1] == 'm':
+    SSD_STATS['VFree'] = float(ssd_stats[-1].strip("m")) * (2 ** 20)
+  elif ssd_stats[-1][-1] == 'k':
+    SSD_STATS['VFree'] = float(ssd_stats[-1].strip("k")) * (2 ** 10)
+  else:
+    SSD_STATS['VFree'] = float(ssd_stats[-1].strip("b"))
+
+  if ssd_stats[-2][-1] == 't':
+    SSD_STATS['VSize'] = float(ssd_stats[-2].strip("t")) * (2 ** 40)
+  elif ssd_stats[-2][-1] == 'g':
+    SSD_STATS['VSize'] = float(ssd_stats[-2].strip("g")) * (2 ** 30)
+  elif ssd_stats[-2][-1] == 'm':
+    SSD_STATS['VSize'] = float(ssd_stats[-2].strip("m")) * (2 ** 20)
+  elif ssd_stats[-2][-1] == 'k':
+    SSD_STATS['VSize'] = float(ssd_stats[-2].strip("k")) * (2 ** 10)
+  else:
+    SSD_STATS['VSize'] = float(ssd_stats[-2].strip("b"))
+   
+  SSD_STATS['VUsed'] = SSD_STATS['VSize'] - SSD_STATS['VFree']
+  SSD_STATS['VUsed_percent'] = (SSD_STATS['VUsed'] * 100) / SSD_STATS['VSize']
+#  print SSD_STATS
+
+  perfdata = ""
+  output = "%%Used = %s; Size = %s; Free = %s;\n" % (SSD_STATS['VUsed_percent'], ssd_stats[-2], ssd_stats[-1])
+  for stat in SSD_STATS:
+     perfdata += "%s=%s;;;; " % (stat, SSD_STATS[stat])
+
+  print output + " | " + perfdata
+  if SSD_STATS['VUsed_percent'] > CRIT_PERC:
+     print "Critical threshold- %s" % CRIT_PERC
+     return STATUS_CRIT
+  if SSD_STATS['VUsed_percent'] > WARN_PERC:
+     print "Error threshold- %s" % WARN_PERC
+     return STATUS_WARN
+  return STATUS_OK
+
+if __name__ == "__main__":
+   sys.exit(main())

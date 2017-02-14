@@ -1,2 +1,1 @@
-# nagios-plugins
-Nagios Plugins modified for monitoring nodes(hosts) in an openstack cluster
+This repo contains all the nagios plugins used in monitoring of SdCloud.

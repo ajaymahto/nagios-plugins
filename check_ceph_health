@@ -1,0 +1,165 @@
+#!/usr/bin/env python
+
+import argparse
+import os
+import subprocess
+import sys
+import json
+
+# default ceph values
+CEPH_COMMAND = '/usr/bin/ceph'
+
+# nagios exit code
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_ERROR = 2
+STATUS_UNKNOWN = 3
+
+def main():
+
+    # parse args
+    parser = argparse.ArgumentParser(description="'ceph health' nagios plugin.")
+    parser.add_argument('-e','--exe', help='ceph executable [%s]' % CEPH_COMMAND)
+    parser.add_argument('-c','--conf', help='alternative ceph conf file')
+    parser.add_argument('-V','--version', help='show version and exit', action='store_true')
+    args = parser.parse_args()
+
+    # validate args
+    ceph_exec = args.exe if args.exe else CEPH_COMMAND
+    if not os.path.exists(ceph_exec):
+        print "ERROR: ceph executable '%s' doesn't exist" % ceph_exec
+        return STATUS_UNKNOWN
+
+    if args.version:
+        print 'version %s' % __version__
+        return STATUS_OK
+
+    if args.conf and not os.path.exists(args.conf):
+        print "ERROR: ceph conf file '%s' doesn't exist" % args.conf
+        return STATUS_UNKNOWN
+
+    # Checking if mon
+    is_mon = 0
+    cmd = "ps aux | grep '/usr/bin/ceph-mon'"
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output, error = p.communicate()
+    if output:
+      out1 = output.strip("\n").split("\n")
+      if len(out1) == 3:
+         is_mon = 1
+      
+    # Gathering ceph cluster names
+    ceph_clusters = []
+    dirlist = filter(lambda f: not f.startswith('.'), os.listdir('/etc/ceph'))
+    for obj in dirlist:
+        if ".conf" in obj:
+           ceph_clusters.append(obj[:-5])
+#    print ceph_clusters
+    perfdata = ""
+    message = ""
+    ok = 0
+    error = 0
+    warning = 0
+    unknown = 0
+
+    perfdata += "is_mon=%s;;;; " % is_mon
+
+    for cluster in ceph_clusters:
+      
+      node_list_command = "sudo ceph --cluster %s osd tree | grep host | sort -t'-' -nk3 | awk '{print $4}'" % (cluster)
+      node_list = subprocess.check_output(node_list_command, shell=True).splitlines()
+      
+      perfdata += "%s-Node_Count=%d;;;; " % (cluster, len(node_list))
+      
+      # get proper health status, with reason
+      ceph_health_cmd = "sudo ceph --cluster %s health" % cluster
+      p1 = subprocess.Popen(ceph_health_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+      output1, error1 = p1.communicate()
+      Health_Output = output1.strip()
+
+      # build command
+      ceph_health = [ceph_exec]
+      ceph_health.append('--cluster')
+      ceph_health.append(cluster)
+      if args.conf:
+          ceph_health.append('-c')
+          ceph_health.append(args.conf)
+      ceph_health.append('-s')
+      ceph_health.append('--format')
+      ceph_health.append('json')
+  
+      ceph_health.insert(0, "sudo")
+
+      # exec command
+      p = subprocess.Popen(ceph_health,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+      output, err = p.communicate()
+  
+      # parse output
+      if output:
+          output = json.loads(output)
+          health = output['health']['overall_status']
+          
+          # Getting iops
+          if 'pgmap' in output and 'op_per_sec' in output[u'pgmap']:
+              iops = output['pgmap']['op_per_sec']
+              read_ops = iops / 2
+              write_ops = iops / 2
+          elif 'pgmap' in output and 'read_op_per_sec' in output[u'pgmap'] and 'write_op_per_sec' in output[u'pgmap']:
+              read_ops = output['pgmap']['read_op_per_sec']
+              write_ops = output['pgmap']['write_op_per_sec']
+              iops = read_ops + write_ops
+          else:
+              iops, read_ops, write_ops = -1, -1, -1
+
+          # Getting throughput in bytes/sec
+          if 'pgmap' in output and 'read_bytes_sec' in output[u'pgmap'] and 'write_bytes_sec' in output[u'pgmap']:
+	      read_bytes_sec = output['pgmap']['read_bytes_sec']
+	      write_bytes_sec = output['pgmap']['write_bytes_sec']
+              throughput = read_bytes_sec + write_bytes_sec
+          else:
+	      throughput = -1
+  
+          if health == 'HEALTH_OK':
+              perfdata += "%s-HEALTH=1;;;; %s-IOPS=%d;;;; %s-READ_OPS=%d;;;; %s-WRITE_OPS=%d;;;; %s-THROUGHPUT=%d;;;; %s-READ_BYTES_SEC=%d;;;; \
+%s-WRITE_BYTES_SEC=%d;;;;" % (cluster, cluster, iops, cluster, read_ops, cluster, write_ops, cluster, throughput, cluster, \
+              read_bytes_sec, cluster, write_bytes_sec)
+              message += "%s-%s\n * %s-Nodes:%d   %s-IOPS:%d	%s-THROUGHPUT:%d B/s\n" % (cluster, Health_Output, cluster, len(node_list), cluster, iops, cluster, throughput)
+              ok += 1
+          if health == 'HEALTH_WARN':
+              perfdata += "%s-HEALTH=2;;;; %s-IOPS=%d;;;; %s-READ_OPS=%d;;;; %s-WRITE_OPS=%d;;;; %s-THROUGHPUT=%d;;;; %s-READ_BYTES_SEC=%d;;;; \
+%s-WRITE_BYTES_SEC=%d;;;;" % (cluster, cluster, iops, cluster, read_ops, cluster, write_ops, cluster, throughput, cluster, \
+              read_bytes_sec, cluster, write_bytes_sec)
+              message += "%s-%s\n * %s-Nodes:%d   %s-IOPS:%d	%s-THROUGHPUT:%d B/s\n" % (cluster, Health_Output, cluster, len(node_list), cluster, iops, cluster, throughput)
+              warning += 1
+          if health == 'HEALTH_ERR':
+              perfdata += "%s-HEALTH=3;;;; %s-IOPS=%d;;;; %s-READ_OPS=%d;;;; %s-WRITE_OPS=%d;;;; %s-THROUGHPUT=%d;;;; %s-READ_BYTES_SEC=%d;;;; \
+%s-WRITE_BYTES_SEC=%d;;;;" % (cluster, cluster, iops, cluster, read_ops, cluster, write_ops, cluster, throughput, cluster, \
+              read_bytes_sec, cluster, write_bytes_sec)
+              message += "%s-%s\n * %s-Nodes:%d   %s-IOPS:%d	%s-THROUGHPUT:%d B/s\n" % (cluster, Health_Output, cluster, len(node_list), cluster, iops, cluster, throughput)
+              error += 3
+
+      elif err:
+          # read only first line of error
+          one_line = err.split('\n')[0]
+          if '-1 ' in one_line:
+              idx = one_line.rfind('-1 ')
+              perfdata += "%s-HEALTH=0;;;; "
+              message += "%s-ERROR: %s: %s\n\n" % (cluster, ceph_exec, one_line[idx+len('-1 '):])
+          else:
+              message += "%s\n\n" % one_line
+          unknown += 1
+
+    print message + " | " + perfdata
+
+    if error != 0:
+        return STATUS_ERROR
+    elif warning != 0:
+        return STATUS_WARNING
+    elif ok !=0:
+        return STATUS_OK
+    else:
+        return STATUS_UNKNOWN
+   
+
+if __name__ == "__main__":
+    sys.exit(main())

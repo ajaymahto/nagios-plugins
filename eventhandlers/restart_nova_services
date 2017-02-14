@@ -1,0 +1,12 @@
+#!/bin/bash
+
+
+CHECK_SERVICE=/usr/lib/nagios/plugins/check_upstart_service
+
+SERVICES="nova-cert nova-conductor nova-consoleauth nova-novncproxy nova-scheduler"
+
+for service in $SERVICES; do
+        if ! $CHECK_SERVICE "$service"; then
+                sudo service $service restart
+        fi
+done

@@ -1,0 +1,108 @@
+#!/usr/bin/env python
+
+import argparse
+import os
+import subprocess
+import sys
+import json
+
+# default ceph values
+CEPH_COMMAND = '/usr/bin/ceph'
+
+# nagios exit code
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_ERROR = 2
+STATUS_UNKNOWN = 3
+WARNING_PERC = 85
+ERROR_PERC = 95
+
+def main():
+
+    # parse args
+    parser = argparse.ArgumentParser(description="'ceph df' nagios plugin.")
+    parser.add_argument('-e','--exe', help='ceph executable [%s]' % CEPH_COMMAND)
+    parser.add_argument('-c','--conf', help='alternative ceph conf file')
+    parser.add_argument('-V','--version', help='show version and exit', action='store_true')
+    args = parser.parse_args()
+
+    # validate args
+    ceph_exec = args.exe if args.exe else CEPH_COMMAND
+    if not os.path.exists(ceph_exec):
+        print "ERROR: ceph executable '%s' doesn't exist" % ceph_exec
+        return STATUS_UNKNOWN
+
+    if args.version:
+        print 'version %s' % __version__
+        return STATUS_OK
+
+    if args.conf and not os.path.exists(args.conf):
+        print "ERROR: ceph conf file '%s' doesn't exist" % args.conf
+        return STATUS_UNKNOWN
+
+    # Gathering ceph cluster names
+    ceph_clusters = []
+    dirlist = filter(lambda f: not f.startswith('.'), os.listdir('/etc/ceph'))
+    for obj in dirlist:	
+        if ".conf" in obj:
+           ceph_clusters.append(obj[:-5])
+    
+    perfdata = ""
+    message = ""
+    ok = 0
+    error = 0
+    warning = 0
+    unknown = 0
+
+    for cluster in ceph_clusters:
+      
+      # build command
+      ceph_df = [ceph_exec]
+      ceph_df.append('--cluster')
+      ceph_df.append(cluster)
+      if args.conf:
+          ceph_df.append('-c')
+          ceph_df.append(args.conf)
+      ceph_df.append('df')
+      ceph_df.append('--format')
+      ceph_df.append('json')
+
+      ceph_df.insert(0, "sudo")
+
+      # exec command
+      p = subprocess.Popen(ceph_df,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+      output, err = p.communicate()
+      info = json.loads(output)
+
+      size_gb = info['stats']['total_bytes']/float(2**30)
+      avail_gb = info['stats']['total_avail_bytes']/float(2**30)
+      used_gb = info['stats']['total_used_bytes']/float(2**30)
+      perc_used = (used_gb * 100) / size_gb
+
+      perfdata += "%s-Size=%.2fGB;;;; %s-Usage=%.2fGB;%.2f;%.2f;0;%.2f " % (cluster, size_gb, cluster, used_gb, ((size_gb * WARNING_PERC) / 100.0), ((size_gb * ERROR_PERC) / 100.0), size_gb)
+      message += "%s-SIZE: %.2fGB    %s-AVAIL:  %.2fGB    %s-USED: %.2fGB    (%.2f %%)    \n" % (cluster, size_gb, cluster, avail_gb, cluster, used_gb, perc_used)
+
+      if perc_used > ERROR_PERC:
+          error += 1
+      elif perc_used > WARNING_PERC:
+          warning += 1
+      elif perc_used >= 0:
+          ok += 1
+      else:
+          unknown += 1
+
+    print message + " | " + perfdata
+
+    if error > 0:
+       return STATUS_ERROR
+    elif warning > 0:
+       return STATUS_WARNING
+    elif ok > 0:
+       return STATUS_OK
+    else:
+       return STATUS_UNKNOWN
+    
+
+if __name__ == "__main__":
+    sys.exit(main())
+

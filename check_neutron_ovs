@@ -1,0 +1,7 @@
+#!/bin/bash
+
+CHECK_SERVICE=/usr/lib/nagios/plugins/check_upstart_service
+
+$CHECK_SERVICE "neutron-plugin-openvswitch-agent"
+
+

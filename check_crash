@@ -1,0 +1,13 @@
+#!/bin/bash
+
+#The plugin reports the names of all crash files in /var/crash
+
+list=$(ls -1  /var/crash/ |grep '.crash')
+num_reports=$(ls -1  /var/crash/ |grep '.crash'|wc -l)
+echo "Crash files: | reports=$num_reports;;;0;"
+if [ -z "$list" ]; then
+	echo "No crash reports"
+	exit 0
+fi
+echo $list | sed -e 's/ /\n/g'
+exit 2

@@ -1,0 +1,12 @@
+#!/bin/bash
+
+. /usr/local/bin/sdc-common
+
+CHECK_SERVICE=/usr/lib/nagios/plugins/check_upstart_service
+
+if ! i_own_vip; then
+    exit 0
+fi
+
+$CHECK_SERVICE "cinder-volume"
+

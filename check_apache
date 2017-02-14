@@ -1,0 +1,22 @@
+#! /usr/bin/env python
+
+from subprocess import Popen, PIPE
+import sys
+
+def main():
+  
+  command = "service apache2 status"
+  p = Popen(command, shell=True, stdout=PIPE, stderr=PIPE)
+  output, error = p.communicate()
+  if output and ('apache2 is running' in output or 'start/running' in output):
+     print output.strip()
+     return 0
+  elif output and ('apache2 is not running' in output or 'stop/waiting' in output):
+     print output.strip()
+     return 2
+  else:
+     print error.strip()
+     return 3
+
+if __name__ == "__main__":
+  sys.exit(main())

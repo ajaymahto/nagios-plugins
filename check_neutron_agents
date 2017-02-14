@@ -1,0 +1,41 @@
+#!/bin/bash
+# This plugin checks neutron agents if they are enable and up or not.
+
+# Checking if controller has vip
+. /usr/local/bin/sdc-common
+
+if ! i_own_vip; then
+    exit 0
+fi
+
+#set -e
+export OS_AUTH_URL=$1
+export OS_USERNAME=$2
+export OS_TENANT_NAME=$3
+export OS_PASSWORD=$4
+#export OS_NEUTRON_URL=$5
+
+EXIT="GOOD"
+
+CMD=$(neutron agent-list | egrep -v "+----|agent_type" | awk -F '|' '{print $2,$4,$5,$6,$7}')
+
+while read ID HOST ALIVE ADMIN_STATE_UP BINARY; do
+        if [ "$ADMIN_STATE_UP" != "True" ]; then
+		EXIT="BAD"
+		echo "$BINARY on $HOST: Admin Down"
+        elif [ "$ALIVE" != ':-)' ]; then
+		EXIT="BAD"
+		echo "$BINARY on $HOST: $ALIVE"
+	fi	
+done < <(echo "$CMD")
+
+if [ "$EXIT" == "BAD" ]; then
+	exit 2
+else
+	echo "All Neutron Agents are running"
+	echo "Neutron-metadata-agent is running"
+	echo "Neutron-openvswitch-agent is running"
+	echo "Neutron-dhcp-agent is running"
+	exit 0
+fi
+

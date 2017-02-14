@@ -1,0 +1,105 @@
+#!/usr/bin/env python
+
+import argparse
+import os
+import subprocess
+import sys
+import json
+
+# default ceph values
+CEPH_COMMAND = '/usr/bin/ceph'
+
+# nagios exit code
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_ERROR = 2
+STATUS_UNKNOWN = 3
+
+def main():
+
+    # parse args
+    parser = argparse.ArgumentParser(description="'ceph quorum_status' nagios plugin.")
+    parser.add_argument('-e','--exe', help='ceph executable [%s]' % CEPH_COMMAND)
+    parser.add_argument('-c','--conf', help='alternative ceph conf file')
+    parser.add_argument('-V','--version', help='show version and exit', action='store_true')
+    args = parser.parse_args()
+
+    # validate args
+    ceph_exec = args.exe if args.exe else CEPH_COMMAND
+    if not os.path.exists(ceph_exec):
+        print "ERROR: ceph executable '%s' doesn't exist" % ceph_exec
+        return STATUS_UNKNOWN
+
+    if args.version:
+        print 'version %s' % __version__
+        return STATUS_OK
+
+    if args.conf and not os.path.exists(args.conf):
+        print "ERROR: ceph conf file '%s' doesn't exist" % args.conf
+        return STATUS_UNKNOWN
+    
+    # Gathering ceph cluster names
+    ceph_clusters = []
+    dirlist = filter(lambda f: not f.startswith('.'), os.listdir('/etc/ceph'))
+    for obj in dirlist:
+        if ".conf" in obj:
+           ceph_clusters.append(obj[:-5])
+#    print ceph_clusters
+    
+    perfdata = ""
+    message = ""
+    ok = 0
+    error = 0
+    warning = 0
+    unknown = 0
+    
+    for cluster in ceph_clusters:
+
+      # build command
+      ceph_quorum_status = [ceph_exec]
+      ceph_quorum_status.append('--cluster')
+      ceph_quorum_status.append(cluster)
+      if args.conf:
+          ceph_quorum_status.append('-c')
+          ceph_quorum_status.append(args.conf)
+      ceph_quorum_status.append('quorum_status')
+      ceph_quorum_status.append('-f')
+      ceph_quorum_status.append('json')
+  
+      ceph_quorum_status.insert(0, "sudo")
+  
+      # exec command
+      p = subprocess.Popen(ceph_quorum_status,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+      output, err = p.communicate()
+      parsed_output = json.loads(output)
+  
+      if len(parsed_output['quorum_names']) == 0:
+          message += "%s-HEALTH ERROR: No monitors found.\n" % (cluster)
+          perfdata += "%s-mons=0;%d;0;0;%d " % (cluster, len(parsed_output['quorum_names']) - 1, len(parsed_output['monmap']['mons']))
+          error += 1
+      elif len(parsed_output['quorum_names']) < len(parsed_output['monmap']['mons']):
+          message += "%s-HEALTH WARNING: %d out of %d mons are in quorum.\n" % (cluster, len(parsed_output['quorum_names']), len(parsed_output['monmap']['mons']))
+          perfdata += "%s-mons=%d;%d;0;0;%d " % (cluster, len(parsed_output['quorum_names']) / len(parsed_output['monmap']['mons']), len(parsed_output['quorum_names']) - 1, len(parsed_output['monmap']['mons']))
+          warning += 1
+      elif len(parsed_output['quorum_names']) == len(parsed_output['monmap']['mons']):
+          message += "%s-HEALTH OK: All %d mons are up and in the quorum.\n" % (cluster, len(parsed_output['quorum_names']))
+          perfdata += "%s-mons=1;%d;0;0;%d " % (cluster, len(parsed_output['quorum_names']) - 1, len(parsed_output['monmap']['mons']))
+          ok += 1
+      else:
+          message += "%s-HEALTH UNKNOWN\n" % (cluster)
+          perfdata += "%s-mons=-1;;;;" % (cluster)
+          unknown += 1
+    print message + " | " + perfdata
+ 
+    if error > 0:
+       return STATUS_ERROR
+    elif warning > 0:
+       return STATUS_WARNING
+    elif ok > 0:
+       return STATUS_OK
+    else:
+       return STATUS_UNKNOWN
+  
+
+if __name__ == "__main__":
+    sys.exit(main())

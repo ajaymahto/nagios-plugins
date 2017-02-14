@@ -1,0 +1,61 @@
+#!/bin/bash
+
+#The following plugin is used to check:
+#1. The total number of packets (sent and received) through an interface
+#2. The total number of error packets (sent and received) through that interface
+#3. The total number of dropped packets (sent and received) through that interface
+#4. The rate at which packets are being sent and received through that interface (pkts/s)
+#TX- Transmitted   RX- Received
+
+usage() { echo "Usage: $0 -c Critical -w Warning -i Interface Name" 1>&2; exit 1; }
+
+while getopts ":c:w:i:" o; do
+    case "${o}" in
+        c)
+            c=${OPTARG}
+            ;;
+        w)
+            w=${OPTARG}
+            ;;
+        i)
+            i=${OPTARG}
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+
+if [ -z "${c}" ] || [ -z "${w}" ] || [ -z "${i}" ]; then
+    usage
+fi
+
+
+INTERVAL="1"  # update interval in seconds
+   
+R1=`cat /sys/class/net/$i/statistics/rx_packets`
+T1=`cat /sys/class/net/$i/statistics/tx_packets`
+sleep $INTERVAL
+R2=`cat /sys/class/net/$i/statistics/rx_packets`
+T2=`cat /sys/class/net/$i/statistics/tx_packets`
+RE=`cat /sys/class/net/$i/statistics/rx_errors`
+TE=`cat /sys/class/net/$i/statistics/tx_errors`
+RD=`cat /sys/class/net/$i/statistics/rx_dropped`
+TD=`cat /sys/class/net/$i/statistics/tx_dropped`
+TXPPS=`expr $T2 - $T1`
+RXPPS=`expr $R2 - $R1`
+echo "TX $i: $TXPPS pkts/s RX $i: $RXPPS pkts/s | tx_speed=$TXPPS;;;0; rx_speed=$RXPPS;;;0; tx_packets=$T2;;;0; rx_packets=$R2;;;0; tx_errors=$TE;;;0; rx_errors=$RE;;;0; tx_dropped=$TD;;;0; rx_dropped=$RD;;;0;"
+echo "TX packets: $T2 errors: $TE dropped: $TD"
+echo "RX packets: $R2 errors: $RE dropped: $RD"
+
+
+if [ "$RXPPS" -gt "$c" ] || [ "$TXPPS" -gt $c ]; then
+   echo "Critical threshold- $c pkts/s"
+   exit 2
+
+elif [ "$RXPPS" -gt "$w" ] || [ "$TXPPS" -gt $w ]; then
+   echo "Warning threshold- $w pkts/s"
+   exit 1
+fi
+
+

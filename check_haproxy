@@ -1,0 +1,47 @@
+#!/usr/bin/env python
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import socket
+import json
+
+COMMAND = '/etc/init.d/haproxy'
+
+# nagios exit code
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_ERROR = 2
+STATUS_UNKNOWN = 3
+
+def main():
+
+  # parse args
+
+  # build command
+  cmd = [COMMAND]
+
+  cmd.append('status')
+
+  cmd.insert(0, "sudo")
+
+  # exec command
+  p = subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+  output, err = p.communicate()
+
+  output=output.strip()
+
+  if output.endswith("not running."):
+    print "HAPROXY ERROR: %s" % output
+    return STATUS_ERROR
+  if output.endswith("is running."):
+    print "HAPROXY OK: %s" % output
+    return STATUS_OK
+  else:
+    print "HAPROXY UNKNOWN: %s" % output
+    return STATUS_UNKNOWN
+
+if __name__ == "__main__":
+    sys.exit(main())

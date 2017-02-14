@@ -1,0 +1,110 @@
+#!/usr/bin/env python
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import socket
+import json
+
+__version__ = '1.1.0'
+
+# default ceph values
+CEPH_COMMAND = '/usr/bin/ceph'
+
+# nagios exit code
+STATUS_OK = 0
+STATUS_WARNING = 1
+STATUS_ERROR = 2
+STATUS_UNKNOWN = 3
+
+def main():
+
+  # parse args
+  parser = argparse.ArgumentParser(description="'ceph osd' nagios plugin.")
+  parser.add_argument('-e','--exe', help='ceph executable [%s]' % CEPH_COMMAND)
+  parser.add_argument('-c','--conf', help='alternative ceph conf file')
+  parser.add_argument('-V','--version', help='show version and exit', action='store_true')
+
+  args = parser.parse_args()
+
+  # validate args
+  ceph_exec = args.exe if args.exe else CEPH_COMMAND
+  if not os.path.exists(ceph_exec):
+    print "OSD ERROR: ceph executable '%s' doesn't exist" % ceph_exec
+    return STATUS_UNKNOWN
+
+  if args.version:
+    print 'version %s' % __version__
+    return STATUS_OK
+
+  if args.conf and not os.path.exists(args.conf):
+    print "OSD ERROR: ceph conf file '%s' doesn't exist" % args.conf
+    return STATUS_UNKNOWN
+
+  # Gathering ceph cluster names
+  ceph_clusters = []
+  dirlist = filter(lambda f: not f.startswith('.'), os.listdir('/etc/ceph'))
+  for obj in dirlist:
+      if ".conf" in obj:
+         ceph_clusters.append(obj[:-5])  
+#  print ceph_clusters
+
+  perfdata = ""
+  message = ""
+  ok = 0
+  error = 0
+  warning = 0
+  unknown = 0
+
+  for cluster in ceph_clusters:
+    
+    # build command
+    ceph_cmd = [ceph_exec]
+    ceph_cmd.append('--cluster')
+    ceph_cmd.append(cluster)
+    if args.conf:
+        ceph_cmd.append('-c')
+        ceph_cmd.append(args.conf)
+    ceph_cmd.append('osd')
+    ceph_cmd.append('stat')
+    ceph_cmd.append('-f')
+    ceph_cmd.append('json')
+
+    ceph_cmd.insert(0, "sudo")
+    # exec command
+    p = subprocess.Popen(ceph_cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    output, err = p.communicate()
+
+    body = json.loads(output)
+    osds = int(body['num_osds'])
+    in_osd = int(body['num_in_osds'])
+    up_osd = int(body['num_up_osds'])
+    num_remapped_pgs = int(body['num_remapped_pgs'])
+
+    perfdata += "%s-total_osds=%d %s-osds_in=%d;%d;0;0;%d %s-osds_up=%d;%d;0;0;%d " % (cluster, osds, cluster, in_osd, osds - 1, osds, cluster, up_osd, in_osd - 1, in_osd)
+    message += "%s-OSD_STATUS : %d osds    %d in    %d up    %d num_remapped_pgs\n" % (cluster, osds, in_osd, up_osd, num_remapped_pgs)
+
+    print message + " | " + perfdata
+
+    if err or not output:
+       error += 1
+    if up_osd == in_osd:
+       ok += 1
+    if up_osd == 0:
+       error += 1
+    if up_osd < in_osd:
+       warning += 1
+
+    if error > 0:
+       return STATUS_ERROR
+    elif warning > 0:
+       return STATUS_WARNING
+    elif ok > 0:
+       return STATUS_OK
+    else:
+       return STATUS_UNKNOWN
+
+if __name__ == "__main__":
+    sys.exit(main())
